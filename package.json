@@ -1,0 +1,19 @@
+{
+  "name": "skill-review-intel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.48",
+    "openclaw": "*",
+    "vitest": "^4.0.18"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "review-intel",
+  "name": "Review Intel",
+  "description": "Product review intelligence via BrightData API",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "description": "BrightData API key"
+      },
+      "timeoutMs": {
+        "type": "number",
+        "description": "Request timeout in milliseconds (default 120000)"
+      },
+      "datasetOverrides": {
+        "type": "object",
+        "description": "Override default dataset IDs per platform/type",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "required": ["apiKey"]
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "API Key",
+      "sensitive": true,
+      "placeholder": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "help": "BrightData API key (or use ${BRIGHTDATA_API_KEY})"
+    },
+    "timeoutMs": {
+      "label": "Timeout (ms)",
+      "advanced": true,
+      "placeholder": "120000"
+    },
+    "datasetOverrides": {
+      "label": "Dataset Overrides",
+      "advanced": true,
+      "help": "Override default BrightData dataset IDs per platform"
+    }
+  }
+}
