@@ -1,7 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { optionalStringEnum } from "openclaw/plugin-sdk";
 import type { BrightDataClient } from "../client.js";
-import { executePlatformScrape, coalesce } from "./shared.js";
+import {
+	executePlatformScrape,
+	coalesce,
+	computeReviewStats,
+	formatRatingDistribution,
+	formatReviewLine,
+} from "./shared.js";
 
 const APP_PLATFORMS = ["google_play", "apple_appstore"] as const;
 
@@ -10,7 +16,7 @@ export function createAppReviewsTool(client: BrightDataClient) {
 		name: "app_reviews",
 		label: "App Reviews",
 		description:
-			"Scan app reviews from Google Play or Apple App Store. Returns review text, ratings, dates, reviewer info, and helpful votes.",
+			"Scan app reviews from Google Play or Apple App Store. Returns all available reviews with aggregate stats (rating distribution, averages), plus individual review text, ratings, dates, reviewer info, helpful votes, and app version.",
 		parameters: Type.Object({
 			url: Type.String({
 				description:
@@ -22,7 +28,8 @@ export function createAppReviewsTool(client: BrightDataClient) {
 			}),
 			num_of_reviews: Type.Optional(
 				Type.Number({
-					description: "Maximum number of reviews to collect.",
+					description:
+						"Maximum number of reviews to collect. Default: 500.",
 				}),
 			),
 			start_date: Type.Optional(
@@ -75,51 +82,61 @@ export function createAppReviewsTool(client: BrightDataClient) {
 				};
 			}
 
-			const { platform, result: review, url } = scraped;
-			const summary = formatAppReviewSummary(platform, review, url);
+			const { platform, results: reviews, url, metadata } = scraped;
+			const stats = computeReviewStats(reviews);
+			const lines: string[] = [];
+
+			// Surface warnings and collection metadata as notices
+			if (metadata.warnings.length > 0) {
+				lines.push("### Notices");
+				for (const warning of metadata.warnings) {
+					lines.push(`- ${warning}`);
+				}
+				lines.push("");
+			}
+
+			lines.push(`## App Review Analysis`);
+			lines.push(`**Platform:** ${platform} | **URL:** ${url}`);
+			lines.push(`**Reviews Collected:** ${stats.total}`);
+
+			// Collection summary
+			if (metadata.received.dateRange.earliest && metadata.received.dateRange.latest) {
+				lines.push(
+					`**Date Range:** ${metadata.received.dateRange.earliest} to ${metadata.received.dateRange.latest}`,
+				);
+			}
+			if (metadata.retried) {
+				lines.push(
+					`**Note:** Auto-retried after stripping unsupported fields: ${metadata.strippedFields.join(", ")}`,
+				);
+			}
+			lines.push("");
+
+			lines.push("### Rating Distribution");
+			lines.push(formatRatingDistribution(stats));
+			lines.push("");
+
+			lines.push(`### Reviews (${stats.total} total)`);
+			lines.push("");
+
+			for (let i = 0; i < reviews.length; i++) {
+				const review = reviews[i]!;
+				lines.push(
+					formatReviewLine(i + 1, review, (r) => {
+						const extras: string[] = [];
+						const helpful = coalesce(r, "helpful_count", "helpful_votes", "thumbs_up");
+						if (helpful != null) extras.push(`Helpful: ${helpful}`);
+						const version = coalesce(r, "app_version", "version");
+						if (version) extras.push(`Version: ${version}`);
+						return extras.length > 0 ? extras.join(" | ") : "";
+					}),
+				);
+			}
 
 			return {
-				content: [{ type: "text" as const, text: summary }],
-				details: { platform, review },
+				content: [{ type: "text" as const, text: lines.join("\n") }],
+				details: { platform, stats, reviews, metadata },
 			};
 		},
 	};
-}
-
-function formatAppReviewSummary(
-	platform: string,
-	review: Record<string, unknown>,
-	url: string,
-): string {
-	const lines: string[] = [
-		`## App Review Scan`,
-		`**Platform:** ${platform}`,
-		`**URL:** ${url}`,
-	];
-
-	const appName = coalesce(review, "app_name", "name", "title");
-	if (appName) lines.push(`**App:** ${appName}`);
-
-	const overallRating = coalesce(review, "rating", "overall_rating", "score");
-	if (overallRating != null) lines.push(`**Overall Rating:** ${overallRating}`);
-
-	const reviewText = coalesce(review, "review_text", "text", "content", "body");
-	if (reviewText) lines.push(`\n**Review:**\n${reviewText}`);
-
-	const reviewer = coalesce(review, "reviewer", "author", "user_name");
-	if (reviewer) lines.push(`**Reviewer:** ${reviewer}`);
-
-	const reviewRating = coalesce(review, "review_rating", "stars");
-	if (reviewRating != null) lines.push(`**Review Rating:** ${reviewRating}/5`);
-
-	const date = coalesce(review, "date", "review_date", "timestamp");
-	if (date) lines.push(`**Date:** ${date}`);
-
-	const helpful = coalesce(review, "helpful_count", "helpful_votes", "thumbs_up");
-	if (helpful != null) lines.push(`**Helpful Votes:** ${helpful}`);
-
-	const version = coalesce(review, "app_version", "version");
-	if (version) lines.push(`**App Version:** ${version}`);
-
-	return lines.join("\n");
 }

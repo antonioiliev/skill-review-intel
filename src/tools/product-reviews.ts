@@ -1,7 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { optionalStringEnum } from "openclaw/plugin-sdk";
 import type { BrightDataClient } from "../client.js";
-import { executePlatformScrape, coalesce } from "./shared.js";
+import {
+	executePlatformScrape,
+	coalesce,
+	computeReviewStats,
+	formatRatingDistribution,
+	formatReviewLine,
+} from "./shared.js";
 
 const PRODUCT_PLATFORMS = ["g2", "trustpilot"] as const;
 
@@ -10,7 +16,7 @@ export function createProductReviewsTool(client: BrightDataClient) {
 		name: "product_reviews",
 		label: "Product Reviews",
 		description:
-			"Scan product reviews from G2 or Trustpilot. Returns review text, ratings, pros/cons, reviewer info, and dates. For G2, can also fetch product overview (overall rating, categories, alternatives).",
+			"Scan product reviews from G2 or Trustpilot. Returns all available reviews with aggregate stats (rating distribution, averages), plus individual review text, ratings, pros/cons, reviewer info, and dates.",
 		parameters: Type.Object({
 			url: Type.String({
 				description:
@@ -20,9 +26,10 @@ export function createProductReviewsTool(client: BrightDataClient) {
 				description:
 					"Platform override: g2 or trustpilot. Auto-detected from URL if omitted.",
 			}),
-			num_of_reviews: Type.Optional(
+			pages: Type.Optional(
 				Type.Number({
-					description: "Maximum number of reviews to collect.",
+					description:
+						"(G2 only) Number of review pages to scrape. ~10 reviews per page. Default: 50.",
 				}),
 			),
 			start_date: Type.Optional(
@@ -42,16 +49,6 @@ export function createProductReviewsTool(client: BrightDataClient) {
 					description: "Sort order for reviews.",
 				}),
 			),
-			min_rating: Type.Optional(
-				Type.Number({
-					description: "Minimum star rating filter (1-5).",
-				}),
-			),
-			max_rating: Type.Optional(
-				Type.Number({
-					description: "Maximum star rating filter (1-5).",
-				}),
-			),
 			include_overview: Type.Optional(
 				Type.Boolean({
 					description:
@@ -61,7 +58,6 @@ export function createProductReviewsTool(client: BrightDataClient) {
 		}),
 
 		async execute(_toolCallId: string, params: Record<string, unknown>) {
-			// Strip include_overview from params before passing to scrape
 			const { include_overview, ...scrapeParams } = params as Record<
 				string,
 				unknown
@@ -86,8 +82,18 @@ export function createProductReviewsTool(client: BrightDataClient) {
 				};
 			}
 
-			const { platform, result: review, url } = scraped;
+			const { platform, results: reviews, url, metadata } = scraped;
+			const stats = computeReviewStats(reviews);
 			const lines: string[] = [];
+
+			// Surface warnings and collection metadata as notices
+			if (metadata.warnings.length > 0) {
+				lines.push("### Notices");
+				for (const warning of metadata.warnings) {
+					lines.push(`- ${warning}`);
+				}
+				lines.push("");
+			}
 
 			// Fetch G2 overview if requested
 			if (include_overview && platform === "g2") {
@@ -107,11 +113,47 @@ export function createProductReviewsTool(client: BrightDataClient) {
 				}
 			}
 
-			lines.push(formatProductReviewSummary(platform, review, url));
+			lines.push(`## Product Review Analysis`);
+			lines.push(`**Platform:** ${platform} | **URL:** ${url}`);
+			lines.push(`**Reviews Collected:** ${stats.total}`);
+
+			// Collection summary
+			if (metadata.received.dateRange.earliest && metadata.received.dateRange.latest) {
+				lines.push(
+					`**Date Range:** ${metadata.received.dateRange.earliest} to ${metadata.received.dateRange.latest}`,
+				);
+			}
+			if (metadata.retried) {
+				lines.push(
+					`**Note:** Auto-retried after stripping unsupported fields: ${metadata.strippedFields.join(", ")}`,
+				);
+			}
+			lines.push("");
+
+			lines.push("### Rating Distribution");
+			lines.push(formatRatingDistribution(stats));
+			lines.push("");
+
+			lines.push(`### Reviews (${stats.total} total)`);
+			lines.push("");
+
+			for (let i = 0; i < reviews.length; i++) {
+				const review = reviews[i]!;
+				lines.push(
+					formatReviewLine(i + 1, review, (r) => {
+						const extras: string[] = [];
+						const pros = coalesce(r, "pros", "likes", "what_i_like");
+						if (pros) extras.push(`Pros: ${String(pros).slice(0, 200)}`);
+						const cons = coalesce(r, "cons", "dislikes", "what_i_dislike");
+						if (cons) extras.push(`Cons: ${String(cons).slice(0, 200)}`);
+						return extras.length > 0 ? extras.join(" | ") : "";
+					}),
+				);
+			}
 
 			return {
 				content: [{ type: "text" as const, text: lines.join("\n") }],
-				details: { platform, review },
+				details: { platform, stats, reviews, metadata },
 			};
 		},
 	};
@@ -152,58 +194,6 @@ function formatG2Overview(
 
 	const description = coalesce(overview, "description", "about");
 	if (description) lines.push(`\n**Description:**\n${description}`);
-
-	return lines.join("\n");
-}
-
-function formatProductReviewSummary(
-	platform: string,
-	review: Record<string, unknown>,
-	url: string,
-): string {
-	const lines: string[] = [
-		`## Product Review Scan`,
-		`**Platform:** ${platform}`,
-		`**URL:** ${url}`,
-	];
-
-	const productName = coalesce(
-		review,
-		"product_name",
-		"name",
-		"title",
-		"company_name",
-	);
-	if (productName) lines.push(`**Product:** ${productName}`);
-
-	const overallRating = coalesce(review, "rating", "overall_rating", "score");
-	if (overallRating != null)
-		lines.push(`**Overall Rating:** ${overallRating}`);
-
-	const reviewText = coalesce(
-		review,
-		"review_text",
-		"text",
-		"content",
-		"body",
-	);
-	if (reviewText) lines.push(`\n**Review:**\n${reviewText}`);
-
-	const reviewer = coalesce(review, "reviewer", "author", "user_name");
-	if (reviewer) lines.push(`**Reviewer:** ${reviewer}`);
-
-	const pros = coalesce(review, "pros", "likes", "what_i_like");
-	if (pros) lines.push(`**Pros:** ${pros}`);
-
-	const cons = coalesce(review, "cons", "dislikes", "what_i_dislike");
-	if (cons) lines.push(`**Cons:** ${cons}`);
-
-	const reviewRating = coalesce(review, "review_rating", "stars");
-	if (reviewRating != null)
-		lines.push(`**Review Rating:** ${reviewRating}/5`);
-
-	const date = coalesce(review, "date", "review_date", "timestamp");
-	if (date) lines.push(`**Date:** ${date}`);
 
 	return lines.join("\n");
 }
