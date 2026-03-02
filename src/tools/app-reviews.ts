@@ -124,7 +124,7 @@ export function createAppReviewsTool(client: BrightDataClient) {
 				lines.push(
 					formatReviewLine(i + 1, review, (r) => {
 						const extras: string[] = [];
-						const helpful = coalesce(r, "helpful_count", "helpful_votes", "thumbs_up");
+						const helpful = coalesce(r, "helpful_count", "found_helpful", "helpful_votes", "thumbs_up");
 						if (helpful != null) extras.push(`Helpful: ${helpful}`);
 						const version = coalesce(r, "app_version", "version");
 						if (version) extras.push(`Version: ${version}`);

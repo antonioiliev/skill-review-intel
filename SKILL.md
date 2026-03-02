@@ -100,6 +100,17 @@ The tools return raw structured review data with aggregate stats. The agent cons
 - **Flag outliers:** Extremely negative reviews with specific complaints may indicate critical issues
 - **Compare time periods:** If date range spans months, note whether sentiment is improving or declining
 
+### Citing evidence (important)
+
+Every claim in the analysis **must** be backed by specific reviews. When stating a theme, pattern, or finding:
+
+- **Reference reviews by index** (e.g., "Users report slow onboarding [3, 7, 15]") so claims are verifiable
+- **Quote key phrases** from the review text that illustrate the point — short, direct quotes, not paraphrased
+- **Quantify** where possible: "8 of 42 reviews mention poor customer support" is stronger than "some users complain about support"
+- **Don't make unsupported claims** — if only 1 review mentions something, say so; don't generalize from a single data point
+
+The goal is a thorough, evidence-based analysis where every finding can be traced back to the actual review data. Think of reviews as primary sources — cite them.
+
 ## Common Use Cases
 
 These patterns show how to handle typical user requests. Match the user's intent to a pattern, call the right tool(s), then analyze the results as described.

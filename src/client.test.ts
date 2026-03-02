@@ -211,7 +211,7 @@ describe("scrapeSync error handling", () => {
 
 	it("throws BrightDataApiError with parsed fieldErrors for validation 400", async () => {
 		const errorBody = {
-			error_type: "validation",
+			type: "validation",
 			errors: [
 				["pages", "must be <= 25"],
 				["sort_by", "invalid value"],
@@ -235,6 +235,35 @@ describe("scrapeSync error handling", () => {
 			]);
 			expect(apiErr.isValidationError).toBe(true);
 			expect(apiErr.message).toContain("pages: must be <= 25");
+		}
+	});
+
+	it("parses real BrightData production error payload (type field)", async () => {
+		const errorBody = {
+			error: "Invalid input provided",
+			code: "validation_error",
+			type: "validation",
+			errors: [
+				["num_of_reviews", "is not allowed for this dataset"],
+				["min_rating", "is not allowed for this dataset"],
+				["sort_filter", "is not allowed for this dataset"],
+			],
+		};
+		fetchMock.mockResolvedValueOnce(mockResponse(400, errorBody));
+
+		const client = new BrightDataClient(TEST_CONFIG);
+
+		try {
+			await client.scrapeSync("g2_reviews", [{ url: "https://g2.com/products/slack/reviews" }]);
+			expect.unreachable("should have thrown");
+		} catch (err) {
+			expect(err).toBeInstanceOf(BrightDataApiError);
+			const apiErr = err as BrightDataApiError;
+			expect(apiErr.status).toBe(400);
+			expect(apiErr.errorType).toBe("validation");
+			expect(apiErr.code).toBe("validation_error");
+			expect(apiErr.isValidationError).toBe(true);
+			expect(apiErr.rejectedFieldNames).toEqual(["num_of_reviews", "min_rating", "sort_filter"]);
 		}
 	});
 

@@ -13,8 +13,21 @@ import { detectPlatform } from "../types.js";
 const DATASET_ALLOWED_PARAMS: Record<string, ReadonlySet<string>> = {
 	g2_reviews: new Set(["pages", "start_date", "end_date", "sort_by"]),
 	trustpilot_reviews: new Set(["start_date", "end_date", "sort_by"]),
-	google_play_reviews: new Set(["num_of_reviews", "start_date", "end_date", "sort_by", "min_rating", "max_rating"]),
-	apple_appstore_reviews: new Set(["num_of_reviews", "start_date", "end_date", "sort_by", "min_rating", "max_rating"]),
+	google_play_reviews: new Set([
+		"num_of_reviews",
+		"start_date",
+		"end_date",
+		"min_rating",
+		"max_rating",
+	]),
+	apple_appstore_reviews: new Set([
+		"num_of_reviews",
+		"start_date",
+		"end_date",
+		"sort_by",
+		"min_rating",
+		"max_rating",
+	]),
 };
 
 /** Per-platform defaults for maximizing review collection. User params override these. */
@@ -85,14 +98,16 @@ export async function executePlatformScrape(
 
 	// Track what was requested for metadata
 	const requestedReviews =
-		typeof input.num_of_reviews === "number"
-			? input.num_of_reviews
-			: undefined;
+		typeof input.num_of_reviews === "number" ? input.num_of_reviews : undefined;
 	const requestedPages =
 		typeof input.pages === "number" ? input.pages : undefined;
 
 	const metadata: ScrapeMetadata = {
-		requested: { numOfReviews: requestedReviews, pages: requestedPages, platform },
+		requested: {
+			numOfReviews: requestedReviews,
+			pages: requestedPages,
+			platform,
+		},
 		received: { count: 0, dateRange: { earliest: null, latest: null } },
 		warnings: [],
 		retried: false,
@@ -134,6 +149,16 @@ export async function executePlatformScrape(
 
 	if (!results.length) return null;
 
+	// Google Play returns app wrapper(s) with nested reviews array — extract individual reviews
+	if (platform === "google_play") {
+		results = results.flatMap((r) =>
+			Array.isArray(r.reviews)
+				? (r.reviews as Record<string, unknown>[])
+				: [r],
+		);
+		if (!results.length) return null;
+	}
+
 	// Populate received metadata
 	const stats = computeDateRange(results);
 	metadata.received = { count: results.length, dateRange: stats };
@@ -153,6 +178,29 @@ export async function executePlatformScrape(
 				`Requested ${requestedPages} pages (~${requestedPages * 10} reviews) but received ${results.length}. The product may have fewer reviews.`,
 			);
 		}
+	}
+
+	// Warn when most reviews lack text — surfaces field mapping issues early
+	const textFields = [
+		"review_text",
+		"review_content",
+		"review",
+		"text",
+		"content",
+		"body",
+		"review_title",
+	];
+
+	const withText = results.filter((r) =>
+		textFields.some((f) => r[f] != null && String(r[f]).trim() !== ""),
+	);
+	if (results.length >= 5 && withText.length < results.length * 0.1) {
+		const sampleKeys = Object.keys(results[0]!).sort().join(", ");
+		metadata.warnings.push(
+			`${results.length - withText.length} of ${results.length} reviews have no text content. ` +
+			`Rating-only reviews cannot be cited in analysis. ` +
+			`Sample review fields: [${sampleKeys}]`,
+		);
 	}
 
 	return { platform, results, url, metadata };
@@ -184,9 +232,7 @@ function toActionableError(err: unknown, platform: string): Error {
 			);
 		}
 
-		const nextSteps = suggestions
-			.map((s, i) => `${i + 1}. ${s}`)
-			.join("\n");
+		const nextSteps = suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
 
 		return new Error(`${err.message}\n\nSuggested next steps:\n${nextSteps}`);
 	}
@@ -201,25 +247,23 @@ function toActionableError(err: unknown, platform: string): Error {
 			`Fall back to the browser agent to visit the ${platform} review page directly.`,
 		);
 
-		const nextSteps = suggestions
-			.map((s, i) => `${i + 1}. ${s}`)
-			.join("\n");
+		const nextSteps = suggestions.map((s, i) => `${i + 1}. ${s}`).join("\n");
 
 		return new Error(`${err.message}\n\nSuggested next steps:\n${nextSteps}`);
 	}
 
 	// Unknown errors — pass through with a fallback suggestion
-	const message =
-		err instanceof Error ? err.message : "Unknown error occurred";
+	const message = err instanceof Error ? err.message : "Unknown error occurred";
 	return new Error(
 		`${message}\n\nSuggested next steps:\n1. Fall back to the browser agent to visit the ${platform} review page directly.`,
 	);
 }
 
 /** Extract earliest/latest dates from results (for metadata). */
-function computeDateRange(
-	reviews: Record<string, unknown>[],
-): { earliest: string | null; latest: string | null } {
+function computeDateRange(reviews: Record<string, unknown>[]): {
+	earliest: string | null;
+	latest: string | null;
+} {
 	let earliest: string | null = null;
 	let latest: string | null = null;
 
@@ -332,13 +376,29 @@ export function formatReviewLine(
 	const rating = extractRating(review);
 	const stars = rating != null ? "\u2B50".repeat(Math.round(rating)) : "N/A";
 
-	const text = coalesce(review, "review_text", "text", "content", "body");
+	const rawText = coalesce(
+		review,
+		"review_text",
+		"review_content",
+		"review",
+		"text",
+		"content",
+		"body",
+		"review_title",
+	);
+	const text = Array.isArray(rawText) ? rawText.join("\n") : rawText;
 	const snippet = text
 		? String(text).slice(0, 120).replace(/\n/g, " ") +
 			(String(text).length > 120 ? "..." : "")
 		: "No text";
 
-	const reviewer = coalesce(review, "reviewer", "author", "user_name");
+	const reviewer = coalesce(
+		review,
+		"reviewer",
+		"reviewer_name",
+		"author",
+		"user_name",
+	);
 	const date = extractDate(review);
 
 	const parts = [`**[${index}]** ${stars} — "${snippet}"`];

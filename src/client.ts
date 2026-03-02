@@ -205,7 +205,8 @@ export class BrightDataClient {
 	/**
 	 * Parse BrightData error responses into structured BrightDataApiError.
 	 * BrightData validation errors have shape:
-	 *   { "error_type": "validation", "errors": [["field_name", "reason"], ...] }
+	 *   { "type": "validation", "errors": [["field_name", "reason"], ...] }
+	 * (Some endpoints may use "error_type" instead of "type"; we check both.)
 	 */
 	private async handleErrorResponse(res: Response): Promise<never> {
 		let rawBody = "";
@@ -219,7 +220,11 @@ export class BrightDataClient {
 		}
 
 		const errorType =
-			typeof parsed?.error_type === "string" ? parsed.error_type : undefined;
+			typeof parsed?.error_type === "string"
+				? parsed.error_type
+				: typeof parsed?.type === "string"
+					? parsed.type
+					: undefined;
 		const code = typeof parsed?.code === "string" ? parsed.code : undefined;
 
 		// Parse field errors from BrightData's [fieldName, reason][] format
